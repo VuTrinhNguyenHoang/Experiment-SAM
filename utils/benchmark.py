@@ -1,5 +1,6 @@
 import torch, time
 import numpy as np
+import pandas as pd
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 from thop import profile
 
@@ -84,6 +85,42 @@ def evaluate(model, loader, criterion, MEAN=None, STD=None):
     
     return valid_loss, acc, f1
 
+def clear_thop_hooks(model):
+    for m in model.modules():
+        if hasattr(m, 'total_ops'):
+            delattr(m, 'total_ops')
+        if hasattr(m, 'total_params'):
+            delattr(m, 'total_params')
+        if hasattr(m, '_hook_handle'):
+            m._hook_handle.remove()
+
 def FLOPs(model, inputs):
-    flops, params = profile(model, inputs=(inputs,))
+    flops, params = profile(model, inputs=(inputs,), verbose=False)
     print(f"FLOPs: {flops/1e9:.3f} GFLOPs, Params: {params/1e6:.2f} M")
+
+def summarize_models(models, input_size=(1, 3, 224, 224), verbose=False):
+    results = []
+    dummy = torch.randn(*input_size)
+
+    for name, model in models:
+        device = next(model.parameters()).device
+        
+        model.eval()
+        inp = dummy.to(device)
+
+        flops, params = profile(model, inputs=(inp,), verbose=False)
+        num_param = params / 1e6
+        gflops = flops / 1e9
+
+        results.append({
+            'model_name': name,
+            'FLOPs': round(gflops, 4),
+            'num_param': round(num_param, 4)
+        })
+
+        del inp
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
+
+    df = pd.DataFrame(results)
+    return df

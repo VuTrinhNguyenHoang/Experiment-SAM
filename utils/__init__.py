@@ -1,4 +1,7 @@
-from .benchmark import accuracy_fscore, fps, evaluate, predict, confusion, FLOPs
+from .benchmark import (
+    accuracy_fscore, fps, evaluate, predict, confusion, FLOPs, 
+    clear_thop_hooks, summarize_models
+)
 from .plot import (
     plot_history,
     plot_confusion_matrix,
@@ -16,6 +19,8 @@ __all__ = [
     'evaluate',
     'confusion',
     'FLOPs',
+    'clear_thop_hooks',
+    'summarize_models',
     
     # Plot functions
     'plot_history',
