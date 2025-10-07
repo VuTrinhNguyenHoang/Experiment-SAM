@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer
+from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer
 from .lstm import xLSTM
 
 class miniARCNN(nn.Module):
