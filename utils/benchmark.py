@@ -83,3 +83,6 @@ def evaluate(model, loader, criterion, MEAN=None, STD=None):
     
     return valid_loss, acc, f1
 
+def FLOPs(model, inputs):
+    flops, params = profile(model, inputs=(inputs,))
+    print(f"FLOPs: {flops/1e9:.3f} GFLOPs, Params: {params/1e6:.2f} M")
