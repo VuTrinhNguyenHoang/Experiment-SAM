@@ -1,4 +1,4 @@
-from .benchmark import accuracy_fscore, fps, evaluate, predict, confusion
+from .benchmark import accuracy_fscore, fps, evaluate, predict, confusion, FLOPs
 from .plot import (
     plot_history,
     plot_confusion_matrix,
@@ -15,6 +15,7 @@ __all__ = [
     'predict',
     'evaluate',
     'confusion',
+    'FLOPs',
     
     # Plot functions
     'plot_history',
