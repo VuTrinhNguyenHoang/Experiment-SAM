@@ -24,6 +24,7 @@ class miniARCNN(nn.Module):
         x = self.stem(x)
         x = self.block1(x)
         x = self.block2(x)
+        x = self.pool(x)
         x = self.block3(x)
         x = self.pool(x)
         
