@@ -60,14 +60,15 @@ class ResdualBlock(nn.Module):
                                stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(c_in)
         
+        self.proj = nn.Conv2d(c_in, c_in, kernel_size=1, bias=False)
+        
         self.conv3 = nn.Conv2d(c_in, c_out, kernel_size=1, 
                                stride=1, bias=False)
-        
-        self.proj = nn.Conv2d(c_out, c_out, kernel_size=1, bias=False)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.relu(self.bn2(self.conv2(x)) + self.proj(x))
+        x = self.conv3(x)
         return x
 
