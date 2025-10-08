@@ -2,34 +2,13 @@ import torch
 import timm
 from collections import OrderedDict
 
-def get_pretrained_model(model_name, num_classes, pretrained=False, in_chans=3, img_size=None):
-    if img_size is not None:
-        try:
-            model = timm.create_model(
-                model_name,
-                pretrained=pretrained,
-                num_classes=num_classes,
-                in_chans=in_chans,
-                img_size=img_size,
-                dynamic_img_size=True
-            )
-        except TypeError:
-            print(f"{model_name} isn't support img_size param")
-            model = timm.create_model(
-                model_name,
-                pretrained=pretrained,
-                num_classes=num_classes,
-                in_chans=in_chans,
-            )
-    else: 
-        model = timm.create_model(
-            model_name,
-            pretrained=pretrained,
-            num_classes=num_classes,
-            in_chans=in_chans,
-        )
-
-    return model
+def get_pretrained_model(model_name, num_classes, pretrained=False, in_chans=3):
+    return timm.create_model(
+        model_name,
+        pretrained=pretrained,
+        num_classes=num_classes,
+        in_chans=in_chans
+    )
 
 def _num_params(module):
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
