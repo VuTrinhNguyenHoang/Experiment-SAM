@@ -3,6 +3,8 @@ import torch.nn as nn
 
 from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer
 from .lstm import xLSTM
+from .backbone import get_pretrained_model
+from .attention import SAMv2
 
 class miniARCNN(nn.Module):
     def __init__(self, num_classes):
@@ -66,21 +68,34 @@ class miniARCNN_xLSTM(nn.Module):
         
         return self.fc(x)
     
-class AttentionAdapter(nn.Module):
-    def __init__(self, backbone, attn_cfg):
-        """
-        attn_cfg: list[tuple(str, nn.Module)]
-            [(layer_name, attention_module), ...]
-        """
-    
+class ViTSAM(nn.Module):
+    def __init__(
+        self,
+        model_name="vit_small_patch16_224",
+        num_classes=7,
+        pretrained=True,
+        in_chans=3,
+        sam_type="all"
+    ):
         super().__init__()
-        self.backbone = backbone
-        self.attn_cfg = {k: v for k, v in attn_cfg}
+        self.model = get_pretrained_model(
+            model_name,
+            pretrained=pretrained,
+            num_classes=num_classes,
+            in_chans=in_chans
+        )
+
+        total_blocks = len(self.model.blocks)
+        if sam_type == "all":
+            sam_blocks = list(range(0, total_blocks))
+        elif sam_type == "hybrid":
+            sam_blocks = list(range(1, total_blocks, 2))
+
+        for i in sam_blocks:
+            blk = self.model.blocks[i]
+            embed_dim = blk.attn.qkv.in_features
+            num_heads = blk.attn.num_heads
+            blk.attn = SAMv2(embed_dim, num_heads)
 
     def forward(self, x):
-        for name, layer in self.backbone.named_children():
-            x = layer(x)
-            if name in self.attn_cfg:
-                x = self.attn_cfg[name](x)
-        return x
-    
+        return self.model(x)

@@ -33,3 +33,24 @@ class SAM(nn.Module):
                            + torch.einsum('bhcm,bhcn->bhmn', vh, rh)) / math.sqrt(self.dh), dim=-1)
         out = torch.einsum('bhmn,bhdn->bhdm', A, qh)
         return out.reshape(B, -1, M).view(B, -1, H, W)
+    
+class SAMv2(nn.Module):
+    def __init__(self, embed_dim, num_heads):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.sam = SAM(c_in=embed_dim, c_out=embed_dim, heads=num_heads)
+
+    def forward(self, x):
+        B, N, D = x.shape
+        cls_tok, x = x[:, :1, :], x[:, 1:, :]
+        HW = N - 1
+        H = W = int(math.sqrt(HW))
+
+        x = x.transpose(1, 2).reshape(B, D, H, W)
+
+        x = self.sam(x)
+
+        x = x.flatten(2).transpose(1, 2)
+        return torch.cat([cls_tok, x], dim=1)
+
