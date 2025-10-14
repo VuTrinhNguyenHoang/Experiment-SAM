@@ -41,7 +41,7 @@ class SAMv2(nn.Module):
         self.num_heads = num_heads
         self.sam = SAM(c_in=embed_dim, c_out=embed_dim, heads=num_heads)
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
         B, N, D = x.shape
         cls_tok, x = x[:, :1, :], x[:, 1:, :]
         HW = N - 1
