@@ -97,5 +97,17 @@ class ViTSAM(nn.Module):
             num_heads = blk.attn.num_heads
             blk.attn = SAMv2(embed_dim, num_heads)
 
+    def freeze_backbone_except_sam(self):
+        for p in self.model.parameters():
+            p.requires_grad = False
+        
+        for name, m in self.model.named_modules():
+            if "attn" in name or "sam" in name:
+                for p in m.parameters():
+                    p.requires_grad = True
+
+        for p in self.model.head.parameters():
+            p.requires_grad = True
+
     def forward(self, x):
         return self.model(x)

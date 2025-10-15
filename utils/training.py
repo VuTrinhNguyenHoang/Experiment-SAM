@@ -44,13 +44,15 @@ def freeze_blocks(model, n_unfreeze=4):
     for p in model.parameters():
         p.requires_grad = False
 
-    if hasattr(model, "blocks"):
-        for blk in model.blocks[-n_unfreeze:]:
+    core_model = getattr(model, "model", model)
+
+    if hasattr(core_model, "blocks"):
+        for blk in core_model.blocks[-n_unfreeze:]:
             for p in blk.parameters():
                 p.requires_grad = True
 
-    if hasattr(model, "head"):
-        for p in model.head.parameters():
+    if hasattr(core_model, "head"):
+        for p in core_model.head.parameters():
             p.requires_grad = True
 
 def unfreeze_all(model):
