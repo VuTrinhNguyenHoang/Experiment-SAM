@@ -40,8 +40,25 @@ def save_ckpt(model, path, meta):
         os.remove(path)
     torch.save({"model": model.state_dict(), "meta": meta}, path)
 
+def freeze_blocks(model, n_unfreeze=4):
+    for p in model.parameters():
+        p.requires_grad = False
+
+    if hasattr(model, "blocks"):
+        for blk in model.blocks[-n_unfreeze:]:
+            for p in blk.parameters():
+                p.requires_grad = True
+
+    if hasattr(model, "head"):
+        for p in model.head.parameters():
+            p.requires_grad = True
+
+def unfreeze_all(model):
+    for p in model.parameters():
+        p.requires_grad = True
+
 def train_model(model_name, model, train_loader, valid_loader, criterion, optimizer, scheduler,
-                gpu_aug=None, MEAN=None, STD=None, epochs=5, patience=None, eps=1e-4):
+                gpu_aug=None, MEAN=None, STD=None, epochs=5, patience=None, eps=1e-4, warmup_epochs=5):
     best_loss, best_epoch = float('inf'), -1
     best_f1, best_acc = 0.0, 0.0
     best_path = f"{model_name}_best.pt"
@@ -52,11 +69,17 @@ def train_model(model_name, model, train_loader, valid_loader, criterion, optimi
         "train_acc": [],
         "valid_acc": []
     }
-
     no_improve_epochs = 0
+
+    print(f"[INFO] Warmup finetuning last 4 blocks for {warmup_epochs} epochs...")
+    freeze_blocks(model, n_unfreeze=4)
 
     pbar = tqdm(range(1, epochs+1), desc=model_name, unit="epoch")
     for epoch in pbar:
+        if epoch == warmup_epochs + 1:
+            print(f"[INFO] Unfreezing all layers from epoch {epoch}...")
+            unfreeze_all(model)
+
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, gpu_aug, MEAN, STD)
         valid_loss, valid_acc, valid_f1 = evaluate(model, valid_loader, criterion, MEAN, STD)
 
@@ -73,20 +96,15 @@ def train_model(model_name, model, train_loader, valid_loader, criterion, optimi
         print(f"[{epoch}/{epochs}]: train_loss={train_loss:.4f} | valid_loss={valid_loss:.4f} | valid_acc={valid_acc*100:.2f}% | valid_f1={valid_f1:.4f}")
         
         if patience is not None:
-            improved = False
-            # Cải thiện nếu tốt hơn hơn eps (giảm loss ít nhất eps)
-            if best_loss == float('inf') or (best_loss - valid_loss) > eps:
-                improved = True
-
+            improved = best_loss == float('inf') or (best_loss - valid_loss) > eps
             if improved:
-                best_loss = valid_loss
-                best_epoch = epoch
-                best_f1 = valid_f1
-                best_acc = valid_acc
+                best_loss, best_epoch, best_f1, best_acc = valid_loss, epoch, valid_f1, valid_acc
                 save_ckpt(model, best_path, {"model_name": model_name, "epoch": epoch,
                                             "best_loss": best_loss, "best_f1": best_f1, "best_acc": best_acc})
                 no_improve_epochs = 0
             else:
+                if epoch <= warmup_epochs:
+                    continue
                 no_improve_epochs += 1
                 if no_improve_epochs >= patience:
                     print(f"EarlyStopping tại epoch {epoch}. Best: loss={best_loss:.4f} f1={best_f1:.4f} acc={best_acc*100:.2f}% ở epoch {best_epoch}")
