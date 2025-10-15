@@ -96,7 +96,8 @@ def train_model(model_name, model, train_loader, valid_loader, criterion, optimi
         print(f"[{epoch}/{epochs}]: train_loss={train_loss:.4f} | valid_loss={valid_loss:.4f} | valid_acc={valid_acc*100:.2f}% | valid_f1={valid_f1:.4f}")
         
         if patience is not None:
-            improved = best_loss == float('inf') or (best_loss - valid_loss) > eps
+            # improved = best_loss == float('inf') or (best_loss - valid_loss) > eps
+            improved = (best_epoch == -1) or ((valid_f1 - best_f1) > eps)
             if improved:
                 best_loss, best_epoch, best_f1, best_acc = valid_loss, epoch, valid_f1, valid_acc
                 save_ckpt(model, best_path, {"model_name": model_name, "epoch": epoch,
