@@ -34,7 +34,7 @@ class miniARCNN(nn.Module):
         return x
 
 class miniARCNN_xLSTM(nn.Module):
-    def __init__(self, num_classes, layers=['s','m']):
+    def __init__(self, num_classes, layers=['s','m'], bilinear_scale=0.1, dropout=0.0):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(3, 8, kernel_size=7, stride=2, padding=3, bias=False),
@@ -47,9 +47,10 @@ class miniARCNN_xLSTM(nn.Module):
         self.block3 = BottleneckTransformer(28, 8, 4)
         
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.xlstm = xLSTM(input_dim=8, hidden_dim=8*2, layers=layers)
+        self.xlstm = xLSTM(input_dim=8, hidden_dim=16, layers=layers, bilinear_scale=bilinear_scale)
 
-        self.fc = nn.Linear(8*2, num_classes)
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.fc = nn.Linear(16, num_classes)
     
     def forward(self, x):
         x = self.stem(x)
@@ -60,11 +61,11 @@ class miniARCNN_xLSTM(nn.Module):
         x = self.pool(x)
 
         B, C, H, W = x.shape
-        x = x.view(B, C, H*W).permute(0, 2, 1)
+        x = x.flatten(2).transpose(1, 2)
 
         x = self.xlstm(x)
         x = x.mean(dim=1)
-        
+        x = self.dropout(x)
         return self.fc(x)
     
 class ViTSAM(nn.Module):
@@ -158,6 +159,62 @@ class ResNetSAM(nn.Module):
 
         x = self.model.global_pool(x)
         x = torch.flatten(x, 1)
+        x = self.dropout(x)
+        x = self.head(x)
+        return x
+
+class ResNetSAMxLSTM(nn.Module):
+    def __init__(self, num_classes, model_name='resnet50', pretrained=True, in_chans=3, num_heads=4, xlstm_hidden=512, xlstm_layers=('s','m'),
+                 bilinear_scale=0.1, dropout=0.0):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name, 
+            num_classes=0, 
+            pretrained=pretrained, 
+            in_chans=in_chans
+        )
+        
+        if hasattr(self.model, "fc"):
+            self.model.fc = nn.Identity()
+
+        last_stage = self.model.layer4
+        last_block = last_stage[-1]
+        c_out = self._last_block_out_channels(last_block)
+        heads = num_heads
+
+        new_blocks = list(last_stage.children()) + [SAMBlock(c_out, heads=heads)]
+        self.model.layer4 = nn.Sequential(*new_blocks)
+
+        self.seq = xLSTM(input_dim=c_out, hidden_dim=xlstm_hidden,
+                         layers=xlstm_layers, bilinear_scale=bilinear_scale)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(c_out, num_classes)
+
+    def _last_block_out_channels(self, block):
+        for attr in ["conv3", "conv2"]:
+            if hasattr(block, attr):
+                return getattr(block, attr).out_channels
+
+        if hasattr(block, "out_channels"):
+            return getattr(block, "out_channels")
+        
+        raise ValueError("Không xác định được số kênh out của block cuối.")
+    
+    def forward(self, x):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.act1(x)
+        x = self.model.maxpool(x)
+
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        x = self.model.layer4(x)
+
+        x = x.flatten(2).transpose(1, 2)
+        x = self.seq(x)
+        x = x.mean(dim=1)
         x = self.dropout(x)
         x = self.head(x)
         return x
