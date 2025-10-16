@@ -4,6 +4,7 @@ import torch.nn as nn
 from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer, SAMBlock
 from .lstm import xLSTM
 from .backbone import get_pretrained_model
+from .attention import SAMv2
 
 class miniARCNN(nn.Module):
     def __init__(self, num_classes):
