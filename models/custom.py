@@ -34,7 +34,7 @@ class miniARCNN(nn.Module):
         return x
 
 class miniARCNN_xLSTM(nn.Module):
-    def __init__(self, num_classes, layers=['s','m'], bilinear_scale=0.1, dropout=0.0):
+    def __init__(self, num_classes, layers=['s','m'], dropout=0.0):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(3, 8, kernel_size=7, stride=2, padding=3, bias=False),
@@ -47,7 +47,7 @@ class miniARCNN_xLSTM(nn.Module):
         self.block3 = BottleneckTransformer(28, 8, 4)
         
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.xlstm = xLSTM(input_dim=8, hidden_dim=16, layers=layers, bilinear_scale=bilinear_scale)
+        self.xlstm = xLSTM(input_dim=8, hidden_dim=16, layers=layers)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.fc = nn.Linear(16, num_classes)
@@ -165,7 +165,7 @@ class ResNetSAM(nn.Module):
 
 class ResNetSAMxLSTM(nn.Module):
     def __init__(self, num_classes, model_name='resnet50', pretrained=True, in_chans=3, num_heads=4, xlstm_hidden=512, xlstm_layers=('s','m'),
-                 bilinear_scale=0.1, dropout=0.0):
+                 dropout=0.0):
         super().__init__()
         self.model = get_pretrained_model(
             model_name, 
@@ -185,8 +185,7 @@ class ResNetSAMxLSTM(nn.Module):
         new_blocks = list(last_stage.children()) + [SAMBlock(c_out, heads=heads)]
         self.model.layer4 = nn.Sequential(*new_blocks)
 
-        self.seq = xLSTM(input_dim=c_out, hidden_dim=xlstm_hidden,
-                         layers=xlstm_layers, bilinear_scale=bilinear_scale)
+        self.seq = xLSTM(input_dim=c_out, hidden_dim=xlstm_hidden, layers=xlstm_layers)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(c_out, num_classes)
