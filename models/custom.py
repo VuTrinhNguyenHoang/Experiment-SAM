@@ -148,7 +148,7 @@ class ResNetSAM(nn.Module):
     def forward(self, x):
         x = self.model.conv1(x)
         x = self.model.bn1(x)
-        x = self.model.relu(x)
+        x = self.model.act1(x)
         x = self.model.maxpool(x)
 
         x = self.model.layer1(x)
@@ -156,7 +156,7 @@ class ResNetSAM(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
 
-        x = self.model.avgpool(x)
+        x = self.model.global_pool(x)
         x = torch.flatten(x, 1)
         x = self.dropout(x)
         x = self.head(x)
