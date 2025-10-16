@@ -44,15 +44,44 @@ def freeze_blocks(model, n_unfreeze=4):
     for p in model.parameters():
         p.requires_grad = False
 
-    core_model = getattr(model, "model", model)
+    core = getattr(model, "model", model)
 
-    if hasattr(core_model, "blocks"):
-        for blk in core_model.blocks[-n_unfreeze:]:
+    # ==== ViT/DeiT (có .blocks, .head) ====
+    if hasattr(core, "blocks"):
+        for blk in core.blocks[-n_unfreeze:]:
             for p in blk.parameters():
                 p.requires_grad = True
+        if hasattr(core, "head"):
+            for p in core.head.parameters():
+                p.requires_grad = True
+        # wrapper head nếu có
+        if hasattr(model, "head"):
+            for p in model.head.parameters():
+                p.requires_grad = True
+        return
 
-    if hasattr(core_model, "head"):
-        for p in core_model.head.parameters():
+    # ==== ResNet family (có layer4) + SAM gắn ở layer4 ====
+    if hasattr(core, "layer4"):
+        # mở SAMBlock trong layer4
+        for m in core.layer4.modules():
+            if m.__class__.__name__ in ("SAMBlock", "SAM"):
+                for p in m.parameters():
+                    p.requires_grad = True
+        # TUỲ CHỌN: mở n block cuối của layer4 nếu muốn
+        if isinstance(core.layer4, torch.nn.Sequential):
+            for blk in list(core.layer4)[-n_unfreeze:]:
+                for p in blk.parameters():
+                    p.requires_grad = True
+
+        # mở classifier của wrapper
+        if hasattr(model, "head"):
+            for p in model.head.parameters():
+                p.requires_grad = True
+        return
+
+    # fallback: mở wrapper head nếu tồn tại
+    if hasattr(model, "head"):
+        for p in model.head.parameters():
             p.requires_grad = True
 
 def unfreeze_all(model):
