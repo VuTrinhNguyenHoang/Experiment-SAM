@@ -46,43 +46,46 @@ def freeze_blocks(model, n_unfreeze=4):
 
     core = getattr(model, "model", model)
 
-    # ==== ViT/DeiT (có .blocks, .head) ====
+    def _open_params(m):
+        if m is None: return
+        for p in m.parameters(): p.requires_grad = True
+
+    # 2) Mở classifier/head ở cả wrapper và core (head, fc, classifier)
+    for hn in ("head", "fc", "classifier"):
+        _open_params(getattr(model, hn, None))
+        _open_params(getattr(core, hn, None))
+
+    # 3) Luôn mở các mô-đun đặc biệt ở bất cứ đâu (SAM/xLSTM)
+    SPECIALS = {"SAM", "SAMBlock", "xLSTM", "sLSTMblock", "mLSTMblock"}
+    for m in core.modules():
+        if m.__class__.__name__ in SPECIALS:
+            _open_params(m)
+
+    # 4) Nhánh theo kiến trúc
+
+    # ViT/DeiT: có .blocks (timm/torchvision vit)
     if hasattr(core, "blocks"):
-        for blk in core.blocks[-n_unfreeze:]:
-            for p in blk.parameters():
-                p.requires_grad = True
-        if hasattr(core, "head"):
-            for p in core.head.parameters():
-                p.requires_grad = True
-        # wrapper head nếu có
-        if hasattr(model, "head"):
-            for p in model.head.parameters():
-                p.requires_grad = True
+        try:
+            blocks = list(core.blocks)
+        except TypeError:
+            # một số timm dùng Sequential
+            blocks = list(core.blocks.children())
+        for blk in blocks[-n_unfreeze:]:
+            _open_params(blk)
         return
 
-    # ==== ResNet family (có layer4) + SAM gắn ở layer4 ====
-    if hasattr(core, "layer4"):
-        # mở SAMBlock trong layer4
-        for m in core.layer4.modules():
-            if m.__class__.__name__ in ("SAMBlock", "SAM"):
-                for p in m.parameters():
-                    p.requires_grad = True
-        # TUỲ CHỌN: mở n block cuối của layer4 nếu muốn
-        if isinstance(core.layer4, torch.nn.Sequential):
-            for blk in list(core.layer4)[-n_unfreeze:]:
-                for p in blk.parameters():
-                    p.requires_grad = True
-
-        # mở classifier của wrapper
-        if hasattr(model, "head"):
-            for p in model.head.parameters():
-                p.requires_grad = True
+    # ResNet-family: có layer4
+    if hasattr(core, "layer4") and isinstance(core.layer4, nn.Sequential):
+        for blk in list(core.layer4)[-n_unfreeze:]:
+            _open_params(blk)
+        # Nếu wrapper có chuỗi sau backbone: seq/xlstm
+        for an in ("seq", "xlstm"):
+            _open_params(getattr(model, an, None))
         return
 
-    # fallback: mở wrapper head nếu tồn tại
-    if hasattr(model, "head"):
-        for p in model.head.parameters():
-            p.requires_grad = True
+    # miniARCNN_xLSTM: mở block cuối + xlstm nếu có tên này
+    for an in ("block3", "xlstm"):
+        _open_params(getattr(model, an, None))
 
 def unfreeze_all(model):
     for p in model.parameters():
