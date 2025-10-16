@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import numpy as np
 from tqdm.auto import tqdm
 from .benchmark import evaluate
