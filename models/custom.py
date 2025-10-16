@@ -96,7 +96,7 @@ class ViTSAM(nn.Module):
             blk = self.model.blocks[i]
             embed_dim = blk.attn.qkv.in_features
             num_heads = blk.attn.num_heads
-            blk.attn = SAMv2(embed_dim, num_heads)
+            blk.attn = SAMv2(embed_dim, num_heads, drop=0.1, attn_drop=0.1, bidirectional=True)
 
     def freeze_backbone_except_sam(self):
         for p in self.model.parameters():

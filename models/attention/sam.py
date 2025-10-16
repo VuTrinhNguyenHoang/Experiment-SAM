@@ -35,22 +35,43 @@ class SAM(nn.Module):
         return out.reshape(B, -1, M).view(B, -1, H, W)
     
 class SAMv2(nn.Module):
-    def __init__(self, embed_dim, num_heads):
+    def __init__(self, embed_dim, num_heads, drop: float = 0.0, attn_drop: float = 0.0, bidirectional=True):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
+        self.bidirectional = bidirectional
         self.sam = SAM(c_in=embed_dim, c_out=embed_dim, heads=num_heads)
+
+        self.cls_from_patch = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim)
+        )
+
+        self.patch_from_cls = nn.Linear(embed_dim, embed_dim)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(embed_dim, embed_dim)
+        self.proj_drop = nn.Dropout(drop)
 
     def forward(self, x, attn_mask=None):
         B, N, D = x.shape
-        cls_tok, x = x[:, :1, :], x[:, 1:, :]
-        HW = N - 1
+        cls = x[:, :1, :]
+        tok = x[:, 1:, :]
+        HW = tok.size(1)
         H = W = int(math.sqrt(HW))
 
-        x = x.transpose(1, 2).reshape(B, D, H, W)
+        tok_2d = tok.transpose(1, 2).reshape(B, D, H, W)
+        y_2d = self.sam(tok_2d)
 
-        x = self.sam(x)
+        y = y_2d.flatten(2).transpose(1, 2)
+        g = y.mean(dim=1, keepdim=True)
+        cls = cls + self.cls_from_patch(g)
+        
+        if self.bidirectional:
+            y = y + self.patch_from_cls(cls).expand_as(y)
 
-        x = x.flatten(2).transpose(1, 2)
-        return torch.cat([cls_tok, x], dim=1)
-
+        out = torch.cat([cls, y], dim=1)
+        out = self.attn_drop(out)
+        out = self.proj(out)
+        out = self.proj_drop(out)
+        return out
