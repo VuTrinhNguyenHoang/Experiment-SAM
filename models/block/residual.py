@@ -1,4 +1,5 @@
 import torch.nn as nn
+from ..attention import SAM
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -72,3 +73,11 @@ class ResdualBlock(nn.Module):
         x = self.conv3(x)
         return x
 
+class SAMBlock(nn.Module):
+    def __init__(self, c_out, heads=4):
+        super().__init__()
+        self.sam = SAM(c_in=c_out, c_out=c_out, heads=heads)
+
+    def forward(self, y):
+        return y + self.sam(y)
+    

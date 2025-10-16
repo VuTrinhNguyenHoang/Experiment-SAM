@@ -1,10 +1,9 @@
 import torch
 import torch.nn as nn
 
-from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer
+from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer, SAMBlock
 from .lstm import xLSTM
 from .backbone import get_pretrained_model
-from .attention import SAMv2
 
 class miniARCNN(nn.Module):
     def __init__(self, num_classes):
@@ -111,3 +110,54 @@ class ViTSAM(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
+class ResNetSAM(nn.Module):
+    def __init__(self, num_classes, model_name='resnet50', pretrained=True, in_chans=3, num_heads=4, dropout=0.0):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name, 
+            num_classes=0, 
+            pretrained=pretrained, 
+            in_chans=in_chans
+        )
+        
+        if hasattr(self.model, "fc"):
+            self.model.fc = nn.Identity()
+
+        last_stage = self.model.layer4
+        last_block = last_stage[-1]
+        c_out = self._last_block_out_channels(last_block)
+        heads = num_heads
+
+        new_blocks = list(last_stage.children()) + [SAMBlock(c_out, heads=heads)]
+        self.model.layer4 = nn.Sequential(*new_blocks)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(c_out, num_classes)
+
+    def _last_block_out_channels(self, block):
+        for attr in ["conv3", "conv2"]:
+            if hasattr(block, attr):
+                return getattr(block, attr).out_channels
+
+        if hasattr(block, "out_channels"):
+            return getattr(block, "out_channels")
+        
+        raise ValueError("Không xác định được số kênh out của block cuối.")
+    
+    def forward(self, x):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        x = self.model.layer4(x)
+
+        x = self.model.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.dropout(x)
+        x = self.head(x)
+        return x
