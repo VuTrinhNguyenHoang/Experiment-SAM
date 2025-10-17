@@ -270,7 +270,7 @@ class ResNetSAMxLSTM(nn.Module):
 
         x = x.flatten(2).transpose(1, 2)
         x = self.seq(x)
-        x = x[:, 0, :]
+        x = x.mean(dim=1)
         x = self.dropout(x)
         x = self.head(x)
         return x
