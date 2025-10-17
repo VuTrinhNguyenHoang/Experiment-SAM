@@ -98,20 +98,76 @@ class ViTSAM(nn.Module):
             num_heads = blk.attn.num_heads
             blk.attn = SAMv2(embed_dim, num_heads, drop=0.1, attn_drop=0.1, bidirectional=True)
 
-    def freeze_backbone_except_sam(self):
-        for p in self.model.parameters():
-            p.requires_grad = False
-        
-        for name, m in self.model.named_modules():
-            if "attn" in name or "sam" in name:
-                for p in m.parameters():
-                    p.requires_grad = True
-
-        for p in self.model.head.parameters():
-            p.requires_grad = True
-
     def forward(self, x):
         return self.model(x)
+
+class ViTSAMxLSTM(nn.Module):
+    def __init__(
+        self,
+        model_name: str = "vit_small_patch16_224",
+        num_classes: int = 7,
+        pretrained: bool = True,
+        in_chans: int = 3,
+        sam_type: str = "hybrid",           # "all" | "hybrid"
+        xlstm_layers = ['s','m'],           # ví dụ: ['s','m'] hoặc ['s','s']
+        xlstm_hidden: int | None = None,    # mặc định = embed_dim
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        self.backbone = get_pretrained_model(
+            model_name,
+            pretrained=pretrained,
+            num_classes=0,
+            in_chans=in_chans
+        )
+        self.embed_dim = getattr(self.backbone, "embed_dim")
+        self.num_classes = num_classes
+
+        total_blocks = len(self.backbone.blocks)
+        if sam_type == "all":
+            sam_blocks = list(range(0, total_blocks))
+        elif sam_type == "hybrid":
+            sam_blocks = list(range(1, total_blocks, 2))
+
+        for i in sam_blocks:
+            blk = self.backbone.blocks[i]
+            D = blk.attn.qkv.in_features
+            Hs = blk.attn.num_heads
+            blk.attn = SAMv2(embed_dim=D, num_heads=Hs, drop=0.1, attn_drop=0.1, bidirectional=True)
+
+        hid = self.embed_dim if xlstm_hidden is None else xlstm_hidden
+        self.xlstm = xLSTM(input_dim=self.embed_dim, hidden_dim=hid, layers=xlstm_layers)
+        self.proj = nn.Identity() if hid == self.embed_dim else nn.Linear(hid, self.embed_dim)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(self.embed_dim, num_classes)
+
+    def forward_features_tokens(self, x):
+        b = x.shape[0]
+        x = self.backbone.patch_embed(x)                      # (B, N, D)
+        if getattr(self.backbone, "cls_token", None) is not None:
+            cls_tok = self.backbone.cls_token.expand(b, -1, -1)
+            x = torch.cat((cls_tok, x), dim=1)                # (B, 1+N, D)
+        if getattr(self.backbone, "pos_embed", None) is not None:
+            x = x + self.backbone.pos_embed[:, :x.size(1), :]
+        if getattr(self.backbone, "pos_drop", None) is not None:
+            x = self.backbone.pos_drop(x)
+
+        for blk in self.backbone.blocks:
+            x = blk(x)                                        # SAMv2/Attn giữ I/O (B,N,D)
+        x = self.backbone.norm(x)                             # (B, N, D)
+        return x
+    
+    def forward(self, x):
+        tokens = self.forward_features_tokens(x)              # (B, N, D)
+        y = self.xlstm(tokens)                                # (B, N, H)
+        y = self.proj(y)                                      # (B, N, D')
+
+        feat = y[:, 0, :]
+
+        feat = self.dropout(feat)
+        logits = self.head(feat)
+        return logits
 
 class ResNetSAM(nn.Module):
     def __init__(self, num_classes, model_name='resnet50', pretrained=True, in_chans=3, num_heads=4, dropout=0.0):
@@ -214,7 +270,7 @@ class ResNetSAMxLSTM(nn.Module):
 
         x = x.flatten(2).transpose(1, 2)
         x = self.seq(x)
-        x = x.mean(dim=1)
+        x = x[:, 0, :]
         x = self.dropout(x)
         x = self.head(x)
         return x
