@@ -279,7 +279,7 @@ class VGG19SAM(nn.Module):
         # Generic CNN path in timm: forward_features -> 4D map
         x = self.model.forward_features(x)   # B,C,H,W
         x = self.sam(x)                      # B,C,H,W
-        x = self.model.global_pool(x)        # B,C,1,1 or B,C
+        x = self.model.head.global_pool(x)        # B,C,1,1 or B,C
         x = torch.flatten(x, 1)
         x = self.dropout(x)
         return self.head(x)
