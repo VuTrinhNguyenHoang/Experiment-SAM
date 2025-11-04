@@ -251,3 +251,142 @@ class ResNetSAMxLSTM(nn.Module):
         tok = self.proj_out(tok)               # B,T,d
         feat = tok.mean(dim=1)                 # B,d
         return self.head(self.dropout(feat))
+    
+class VGG19SAM(nn.Module):
+    def __init__(self, num_classes: int, model_name: str = 'vgg19_bn',
+                 pretrained: bool = True, in_chans: int = 3,
+                 num_heads: int = 4, dropout: float = 0.0):
+        super().__init__()
+        # Use timm backbone without classifier head
+        self.model = get_pretrained_model(
+            model_name,
+            num_classes=0,
+            pretrained=pretrained,
+            in_chans=in_chans
+        )
+
+        # Try to remove existing classifier if present
+        if hasattr(self.model, 'classifier'):
+            self.model.classifier = nn.Identity()
+
+        c_out = getattr(self.model, 'num_features')
+        self.sam = SAMBlock(c_out, heads=num_heads)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(c_out, num_classes)
+
+    def forward(self, x):
+        # Generic CNN path in timm: forward_features -> 4D map
+        x = self.model.forward_features(x)   # B,C,H,W
+        x = self.sam(x)                      # B,C,H,W
+        x = self.model.global_pool(x)        # B,C,1,1 or B,C
+        x = torch.flatten(x, 1)
+        x = self.dropout(x)
+        return self.head(x)
+
+class VGG19SAMxLSTM(nn.Module):
+    def __init__(self, num_classes: int, model_name: str = 'vgg19_bn',
+                 pretrained: bool = True, in_chans: int = 3,
+                 num_heads: int = 4,
+                 bottleneck_dim: int = 256, xlstm_hidden: int = 256,
+                 xlstm_layers=('s', 'm'), dropout: float = 0.0):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name,
+            num_classes=0,
+            pretrained=pretrained,
+            in_chans=in_chans
+        )
+
+        if hasattr(self.model, 'classifier'):
+            self.model.classifier = nn.Identity()
+
+        c_out = getattr(self.model, 'num_features')
+        self.sam = SAMBlock(c_out, heads=num_heads)
+
+        # Project channel features to a compact token dim for sequence modeling
+        self.proj_in = nn.Linear(c_out, bottleneck_dim)
+        self.seq = xLSTM(input_dim=bottleneck_dim, hidden_dim=xlstm_hidden, layers=xlstm_layers)
+        self.proj_out = nn.Identity() if xlstm_hidden == bottleneck_dim else nn.Linear(xlstm_hidden, bottleneck_dim)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(bottleneck_dim, num_classes)
+
+    def forward(self, x):
+        # CNN features -> SAM -> tokens -> xLSTM -> mean pool tokens
+        f = self.model.forward_features(x)   # B,C,H,W
+        f = self.sam(f)                      # B,C,H,W
+        tok = f.flatten(2).transpose(1, 2)   # B,T,C
+        tok = self.proj_in(tok)              # B,T,d
+        tok = self.seq(tok)                  # B,T,H
+        tok = self.proj_out(tok)             # B,T,d
+        feat = tok.mean(dim=1)               # B,d
+        return self.head(self.dropout(feat))
+
+class MobileViTSAM(nn.Module):
+    def __init__(self, num_classes: int, model_name: str = 'mobilevit_s',
+                 pretrained: bool = True, in_chans: int = 3,
+                 num_heads: int = 4, dropout: float = 0.0):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name,
+            num_classes=0,
+            pretrained=pretrained,
+            in_chans=in_chans
+        )
+
+        c_out = getattr(self.model, 'num_features')
+        self.sam = SAMBlock(c_out, heads=num_heads)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(c_out, num_classes)
+
+        # If the base model exposes a classifier, neutralize it to avoid accidental use
+        if hasattr(self.model, 'classifier'):
+            self.model.classifier = nn.Identity()
+
+    def forward(self, x):
+        f = self.model.forward_features(x)   # B,C,H,W for MobileViT
+        f = self.sam(f)
+        f = self.model.global_pool(f)
+        f = torch.flatten(f, 1)
+        f = self.dropout(f)
+        return self.head(f)
+
+class MobileViTSAMxLSTM(nn.Module):
+    def __init__(self, num_classes: int, model_name: str = 'mobilevit_s',
+                 pretrained: bool = True, in_chans: int = 3,
+                 num_heads: int = 4,
+                 bottleneck_dim: int = 256, xlstm_hidden: int = 256,
+                 xlstm_layers=('s','m'), dropout: float = 0.0):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name,
+            num_classes=0,
+            pretrained=pretrained,
+            in_chans=in_chans
+        )
+
+        c_out = getattr(self.model, 'num_features')
+        self.sam = SAMBlock(c_out, heads=num_heads)
+
+        self.proj_in = nn.Linear(c_out, bottleneck_dim)
+        self.seq = xLSTM(input_dim=bottleneck_dim, hidden_dim=xlstm_hidden, layers=xlstm_layers)
+        self.proj_out = nn.Identity() if xlstm_hidden == bottleneck_dim else nn.Linear(xlstm_hidden, bottleneck_dim)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(bottleneck_dim, num_classes)
+
+        if hasattr(self.model, 'classifier'):
+            self.model.classifier = nn.Identity()
+
+    def forward(self, x):
+        f = self.model.forward_features(x)   # B,C,H,W
+        f = self.sam(f)
+        tok = f.flatten(2).transpose(1, 2)   # B,T,C
+        tok = self.proj_in(tok)              # B,T,d
+        tok = self.seq(tok)                  # B,T,H
+        tok = self.proj_out(tok)             # B,T,d
+        feat = tok.mean(dim=1)               # B,d
+        return self.head(self.dropout(feat))
+    
