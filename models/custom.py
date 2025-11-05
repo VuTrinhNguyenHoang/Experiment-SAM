@@ -390,3 +390,97 @@ class MobileViTSAMxLSTM(nn.Module):
         feat = tok.mean(dim=1)               # B,d
         return self.head(self.dropout(feat))
     
+class MobileNetSAM(nn.Module):
+    def __init__(self, num_classes, model_name="mobilenetv3_small_100", 
+                 pretrained=True, in_chans=3, num_heads=4, dropout=0.1):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name,
+            num_classes=0,
+            pretrained=pretrained,
+            in_chans=in_chans
+        )
+        
+        if hasattr(self.model, 'classifier'):
+            self.model.classifier = nn.Identity()
+
+        c_out = getattr(self.model, 'num_features')
+        self.sam = SAMBlock(c_out, heads=num_heads)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(c_out, num_classes)
+
+    def forward(self, x):
+        f = self.model.forward_features(x)
+        f = self.sam(f)
+        f = self.model.head.global_pool(f)
+        f = torch.flatten(f, 1)
+        f = self.dropout(f)
+        return self.head(f)
+
+class MobileNetSAMxLSTM(nn.Module):
+    def __init__(self, num_classes: int, model_name: str = 'mobilenetv3_small_100',
+                 pretrained: bool = True, in_chans: int = 3,
+                 num_heads: int = 4,
+                 bottleneck_dim: int = 256, xlstm_hidden: int = 256,
+                 xlstm_layers=('s', 'm'), dropout: float = 0.1):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name,
+            num_classes=0,
+            pretrained=pretrained,
+            in_chans=in_chans
+        )
+        if hasattr(self.model, 'classifier'):
+            self.model.classifier = nn.Identity()
+
+        c_out = getattr(self.model, 'num_features')
+        self.sam = SAMBlock(c_out, heads=num_heads)
+
+        self.proj_in  = nn.Linear(c_out, bottleneck_dim)
+        self.seq      = xLSTM(input_dim=bottleneck_dim, hidden_dim=xlstm_hidden, layers=xlstm_layers)
+        self.proj_out = nn.Identity() if xlstm_hidden == bottleneck_dim else nn.Linear(xlstm_hidden, bottleneck_dim)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head    = nn.Linear(bottleneck_dim, num_classes)
+
+    def forward(self, x):
+        f = self.model.forward_features(x)   # B,C,H,W
+        f = self.sam(f)
+        tok = f.flatten(2).transpose(1, 2)   # B,T,C
+        tok = self.proj_in(tok)              # B,T,d
+        tok = self.seq(tok)                  # B,T,H
+        tok = self.proj_out(tok)             # B,T,d
+        feat = tok.mean(dim=1)               # B,d
+        return self.head(self.dropout(feat))
+
+class DeiTSAM(nn.Module):
+    def __init__(self,
+                 model_name: str = "deit_small_patch16_224",
+                 num_classes: int = 7,
+                 pretrained: bool = True,
+                 in_chans: int = 3,
+                 sam_type: str = "hybrid"):
+        super().__init__()
+        self.model = get_pretrained_model(
+            model_name,
+            pretrained=pretrained,
+            num_classes=num_classes,
+            in_chans=in_chans
+        )
+
+        total_blocks = len(self.model.blocks)
+        if sam_type == "all":
+            sam_blocks = list(range(0, total_blocks))
+        else:
+            sam_blocks = list(range(1, total_blocks, 2))
+
+        for i in sam_blocks:
+            blk = self.model.blocks[i]
+            D   = blk.attn.qkv.in_features
+            Hs  = blk.attn.num_heads
+            blk.attn = SAMv2(embed_dim=D, num_heads=Hs, drop=0.1, attn_drop=0.1, bidirectional=True)
+
+    def forward(self, x):
+        return self.model(x)
+    
