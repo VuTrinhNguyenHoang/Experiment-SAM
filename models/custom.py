@@ -4,7 +4,7 @@ import torch.nn as nn
 from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer, SAMBlock
 from .lstm import xLSTM
 from .backbone import get_pretrained_model
-from .attention import SAMv2
+from .attention import SAMv2, SAM_R
 
 class miniARCNN(nn.Module):
     def __init__(self, num_classes):
@@ -153,7 +153,8 @@ class ViTSAMxLSTM(nn.Module):
         return self.head(self.dropout(feat))
 
 class ResNetSAM(nn.Module):
-    def __init__(self, num_classes, model_name='resnet50', pretrained=True, in_chans=3, num_heads=4, dropout=0.0):
+    def __init__(self, num_classes, model_name='resnet50', pretrained=True, 
+                 in_chans=3, num_heads=4, dropout=0.0, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(
             model_name, 
@@ -170,7 +171,7 @@ class ResNetSAM(nn.Module):
         c_out = self._last_block_out_channels(last_block)
         heads = num_heads
 
-        new_blocks = list(last_stage.children()) + [SAMBlock(c_out, heads=heads)]
+        new_blocks = list(last_stage.children()) + [SAMBlock(c_out, heads=heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
         self.model.layer4 = nn.Sequential(*new_blocks)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
@@ -206,7 +207,7 @@ class ResNetSAM(nn.Module):
 class ResNetSAMxLSTM(nn.Module):
     def __init__(self, num_classes, model_name='resnet50', pretrained=True, in_chans=3,
                  num_heads=4, bottleneck_dim=256, xlstm_hidden=256, xlstm_layers=('s','m'),
-                 dropout=0.0):
+                 dropout=0.0, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(model_name, num_classes=0,
                                           pretrained=pretrained, in_chans=in_chans)
@@ -217,16 +218,13 @@ class ResNetSAMxLSTM(nn.Module):
         last_block = last_stage[-1]
         c_out = self._last_block_out_channels(last_block)
 
-        self.model.layer4 = nn.Sequential(*list(last_stage.children()),
-                                          SAMBlock(c_out, heads=num_heads))
+        new_blocks = list(last_stage.children()) + [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.model.layer4 = nn.Sequential(*new_blocks)
 
-        # ↓ chiếu C_out → d (nhỏ) trước khi vào xLSTM
         self.proj_in = nn.Linear(c_out, bottleneck_dim)
 
-        # xLSTM chạy ở không gian d (nhỏ)
         self.seq = xLSTM(input_dim=bottleneck_dim, hidden_dim=xlstm_hidden, layers=xlstm_layers)
 
-        # head làm trên hidden (chọn bằng với bottleneck để gọn)
         self.proj_out = nn.Identity() if xlstm_hidden == bottleneck_dim else nn.Linear(xlstm_hidden, bottleneck_dim)
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(bottleneck_dim, num_classes)
@@ -255,7 +253,7 @@ class ResNetSAMxLSTM(nn.Module):
 class VGG19SAM(nn.Module):
     def __init__(self, num_classes: int, model_name: str = 'vgg19_bn',
                  pretrained: bool = True, in_chans: int = 3,
-                 num_heads: int = 4, dropout: float = 0.0):
+                 num_heads: int = 4, dropout: float = 0.0, num_layer=1):
         super().__init__()
         # Use timm backbone without classifier head
         self.model = get_pretrained_model(
@@ -270,7 +268,8 @@ class VGG19SAM(nn.Module):
             self.model.classifier = nn.Identity()
 
         c_out = getattr(self.model, 'num_features')
-        self.sam = SAMBlock(c_out, heads=num_heads)
+        sam = [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.sam = nn.Sequential(*sam)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(c_out, num_classes)
@@ -289,7 +288,7 @@ class VGG19SAMxLSTM(nn.Module):
                  pretrained: bool = True, in_chans: int = 3,
                  num_heads: int = 4,
                  bottleneck_dim: int = 256, xlstm_hidden: int = 256,
-                 xlstm_layers=('s', 'm'), dropout: float = 0.0):
+                 xlstm_layers=('s', 'm'), dropout: float = 0.0, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(
             model_name,
@@ -302,7 +301,8 @@ class VGG19SAMxLSTM(nn.Module):
             self.model.classifier = nn.Identity()
 
         c_out = getattr(self.model, 'num_features')
-        self.sam = SAMBlock(c_out, heads=num_heads)
+        sam = [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.sam = nn.Sequential(*sam)
 
         # Project channel features to a compact token dim for sequence modeling
         self.proj_in = nn.Linear(c_out, bottleneck_dim)
@@ -326,7 +326,7 @@ class VGG19SAMxLSTM(nn.Module):
 class MobileViTSAM(nn.Module):
     def __init__(self, num_classes: int, model_name: str = 'mobilevit_s',
                  pretrained: bool = True, in_chans: int = 3,
-                 num_heads: int = 4, dropout: float = 0.0):
+                 num_heads: int = 4, dropout: float = 0.0, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(
             model_name,
@@ -336,7 +336,8 @@ class MobileViTSAM(nn.Module):
         )
 
         c_out = getattr(self.model, 'num_features')
-        self.sam = SAMBlock(c_out, heads=num_heads)
+        sam = [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.sam = nn.Sequential(*sam)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(c_out, num_classes)
@@ -358,7 +359,7 @@ class MobileViTSAMxLSTM(nn.Module):
                  pretrained: bool = True, in_chans: int = 3,
                  num_heads: int = 4,
                  bottleneck_dim: int = 256, xlstm_hidden: int = 256,
-                 xlstm_layers=('s','m'), dropout: float = 0.0):
+                 xlstm_layers=('s','m'), dropout: float = 0.0, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(
             model_name,
@@ -368,7 +369,8 @@ class MobileViTSAMxLSTM(nn.Module):
         )
 
         c_out = getattr(self.model, 'num_features')
-        self.sam = SAMBlock(c_out, heads=num_heads)
+        sam = [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.sam = nn.Sequential(*sam)
 
         self.proj_in = nn.Linear(c_out, bottleneck_dim)
         self.seq = xLSTM(input_dim=bottleneck_dim, hidden_dim=xlstm_hidden, layers=xlstm_layers)
@@ -392,7 +394,7 @@ class MobileViTSAMxLSTM(nn.Module):
     
 class MobileNetSAM(nn.Module):
     def __init__(self, num_classes, model_name="mobilenetv3_small_100", 
-                 pretrained=True, in_chans=3, num_heads=4, dropout=0.1):
+                 pretrained=True, in_chans=3, num_heads=4, dropout=0.1, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(
             model_name,
@@ -405,7 +407,8 @@ class MobileNetSAM(nn.Module):
             self.model.classifier = nn.Identity()
 
         c_out = getattr(self.model, 'num_features')
-        self.sam = SAMBlock(c_out, heads=num_heads)
+        sam = [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.sam = nn.Sequential(*sam)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(c_out, num_classes)
@@ -423,7 +426,7 @@ class MobileNetSAMxLSTM(nn.Module):
                  pretrained: bool = True, in_chans: int = 3,
                  num_heads: int = 4,
                  bottleneck_dim: int = 256, xlstm_hidden: int = 256,
-                 xlstm_layers=('s', 'm'), dropout: float = 0.1):
+                 xlstm_layers=('s', 'm'), dropout: float = 0.1, num_layer=1):
         super().__init__()
         self.model = get_pretrained_model(
             model_name,
@@ -435,7 +438,8 @@ class MobileNetSAMxLSTM(nn.Module):
             self.model.classifier = nn.Identity()
 
         c_out = getattr(self.model, 'num_features')
-        self.sam = SAMBlock(c_out, heads=num_heads)
+        sam = [SAMBlock(c_out, heads=num_heads, attn_drop=0.1, proj_drop=0.1) for _ in range(num_layer)]
+        self.sam = nn.Sequential(*sam)
 
         self.proj_in  = nn.Linear(c_out, bottleneck_dim)
         self.seq      = xLSTM(input_dim=bottleneck_dim, hidden_dim=xlstm_hidden, layers=xlstm_layers)

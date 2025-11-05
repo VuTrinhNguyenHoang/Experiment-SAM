@@ -1,5 +1,6 @@
+import torch
 import torch.nn as nn
-from ..attention import SAM
+from ..attention import SAM, SAM_R
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -74,10 +75,14 @@ class ResdualBlock(nn.Module):
         return x
 
 class SAMBlock(nn.Module):
-    def __init__(self, c_out, heads=4):
+    def __init__(self, c, heads=4, attn_drop=0.1, proj_drop=0.1, pe_learnable=False):
         super().__init__()
-        self.sam = SAM(c_in=c_out, c_out=c_out, heads=heads)
+        self.sam = SAM_R(c_in=c, c_out=c, num_heads=heads, attn_drop=attn_drop, proj_drop=proj_drop,
+                         learnable=pe_learnable)
 
-    def forward(self, y):
-        return y + self.sam(y)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        y = self.sam(x)
+        return x + self.gamma * (y - x)
     
