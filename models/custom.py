@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import timm
 
 from .block import BasicBlock, BottleneckBlock, ResdualBlock, BottleneckTransformer, SAMBlock
 from .lstm import xLSTM
@@ -488,3 +489,57 @@ class DeiTSAM(nn.Module):
     def forward(self, x):
         return self.model(x)
     
+class Baseline(nn.Module):
+    def __init__(self, model_name, num_classes, pretrained=False, in_chans=3, dropout=0.1):
+        super().__init__()
+        self.backbone = timm.create_model(
+            model_name,
+            pretrained=pretrained,
+            num_classes=0,
+            in_chans=in_chans,
+            global_pool="avg",
+        )
+
+        for attr in ("classifier", "fc"):
+            if hasattr(self.backbone, attr):
+                setattr(self.backbone, attr, nn.Identity())
+        if hasattr(self.backbone, "head") and hasattr(self.backbone.head, "fc"):
+            self.backbone.head.fc = nn.Identity()
+
+        self.num_features = getattr(self.backbone, "num_features", None)
+        if not isinstance(self.num_features, int):
+            with torch.no_grad():
+                x = torch.zeros(1, in_chans, 224, 224)
+                f = self.backbone.forward_features(x)
+                if f.dim() == 4:
+                    self.num_features = int(f.shape[1])
+                elif f.dim() == 2:
+                    self.num_features = int(f.shape[1])
+                else:
+                    raise RuntimeError("Không suy luận được num_features")
+                
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.head = nn.Linear(self.num_features, num_classes)
+
+        self._has_global_pool = hasattr(self.backbone, "global_pool") or \
+                                (hasattr(self.backbone, "head") and hasattr(self.backbone.head, "global_pool"))
+        self.adapool = nn.AdaptiveAvgPool2d(1)
+
+    def _global_pool(self, f: torch.Tensor) -> torch.Tensor:
+        if f.dim() == 2:
+            return f
+        if self._has_global_pool:
+            if hasattr(self.backbone, "global_pool"):
+                return self.backbone.global_pool(f)
+            if hasattr(self.backbone, "head") and hasattr(self.backbone.head, "global_pool"):
+                return self.backbone.head.global_pool(f)
+
+        return self.adapool(f)
+
+    def forward(self, x):
+        f = self.backbone.forward_features(x)
+        f = self._global_pool(f)
+        if f.dim() == 4:
+            f = f.reshape(f.size(0), -1)
+        logits = self.head(self.dropout(f))
+        return logits
