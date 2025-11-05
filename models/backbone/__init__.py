@@ -1,8 +1,17 @@
 import torch
+import timm
 from collections import OrderedDict
 
 def _num_params(module):
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
+
+def get_pretrained_model(model_name, num_classes, pretrained=False, in_chans=3):
+    return timm.create_model(
+        model_name,
+        pretrained=pretrained,
+        num_classes=num_classes,
+        in_chans=in_chans
+    )
 
 def inspect_model(model, inputs=(1, 3, 224, 224), print_summary=True, return_details=False):
     model.eval()
@@ -50,5 +59,6 @@ def inspect_model(model, inputs=(1, 3, 224, 224), print_summary=True, return_det
     return call_records if return_details else None
 
 __all__ = [
-    'inspect_model'
+    'inspect_model',
+    'get_pretrained_model'
 ]

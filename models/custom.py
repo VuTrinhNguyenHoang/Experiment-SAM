@@ -492,12 +492,11 @@ class DeiTSAM(nn.Module):
 class Baseline(nn.Module):
     def __init__(self, model_name, num_classes, pretrained=False, in_chans=3, dropout=0.1):
         super().__init__()
-        self.backbone = timm.create_model(
+        self.backbone = get_pretrained_model(
             model_name,
-            pretrained=pretrained,
             num_classes=0,
-            in_chans=in_chans,
-            global_pool="avg",
+            pretrained=pretrained,
+            in_chans=in_chans
         )
 
         for attr in ("classifier", "fc"):
