@@ -124,7 +124,7 @@ class SAM_R(nn.Module):
         A = self.attn_drop(A)
 
         y = torch.einsum('bhmn,bhcn->bhcm', A, qh)  # (B,h,dh,M)
-        y = y.view(B, self.h * self.dh, H, W)
+        y = y.reshape(B, self.h * self.dh, H, W)
         y = self.out_proj(y)
         y = self.out_drop(y)
         return y
