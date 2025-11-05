@@ -75,3 +75,56 @@ class SAMv2(nn.Module):
         out = self.proj(out)
         out = self.proj_drop(out)
         return out
+
+class SAM_R(nn.Module):
+    def __init__(self, c_in, c_out, num_heads, attn_drop, proj_drop, learnable=False):
+        super().__init__()
+        assert c_out % num_heads == 0
+        self.h = num_heads
+        self.dh = c_out // self.h
+        
+        self.norm = nn.BatchNorm2d(c_in)
+        self.v = nn.Conv2d(c_in, c_out, 1, bias=False)
+        self.z = nn.Conv2d(c_in, c_out, 1, bias=False)
+        self.q = nn.Conv2d(c_in, c_out, 1, bias=False)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.out_proj = nn.Conv2d(c_out, c_out, 1, bias=False)
+        self.out_drop = nn.Dropout2d(proj_drop)
+        nn.init.zeros_(self.out_proj.weight)
+        
+        self.pe = PositionalEncoding2D(c_out, learnable=learnable, flat=False)
+
+    def _split(self, t):
+        B, C, H, W = t.shape
+        M = H * W
+        t = t.view(B, self.h, self.dh, M)
+        return t, H, W
+    
+    def l2_norm_per_channel_token(self, x, eps: float = 1e-6):
+        n = x.pow(2).sum(1, keepdim=True).add_(eps).sqrt_()
+        return x / n
+
+    def forward(self, x):
+        B, _, H, W = x.shape
+        x = self.norm(x)
+        v, z, q = self.v(x), self.z(x), self.q(x)
+        r = self.pe(B, H, W, x.device, x.dtype)
+
+        zN = self.l2_norm_per_channel_token(z)
+        rN = self.l2_norm_per_channel_token(r)
+
+        zr = zN + rN
+        vh, _, _ = self._split(v)
+        zrh, _, _ = self._split(zr)
+        qh, _, _ = self._split(q)
+
+        logits = torch.einsum('bhcm,bhcn->bhmn', vh, zrh) / math.sqrt(self.dh)
+        A = torch.softmax(logits, dim=-1)
+        A = self.attn_drop(A)
+
+        y = torch.einsum('bhmn,bhcn->bhcm', A, qh)  # (B,h,dh,M)
+        y = y.view(B, self.h * self.dh, H, W)
+        y = self.out_proj(y)
+        y = self.out_drop(y)
+        return y

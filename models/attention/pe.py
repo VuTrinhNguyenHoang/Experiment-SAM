@@ -14,7 +14,7 @@ class PatchEmbedding(nn.Module):
         return x
     
 class PositionalEncoding2D(nn.Module):
-    def __init__(self, dim, max_h=256, max_w=256, learnable=False, temperature=10000):
+    def __init__(self, dim, max_h=256, max_w=256, learnable=False, temperature=10000, flat=True):
         super().__init__()
         if not learnable:
             assert dim % 4 == 0
@@ -23,12 +23,12 @@ class PositionalEncoding2D(nn.Module):
         self.max_h = max_h
         self.max_w = max_w
         self.temperature = temperature
+        self.flat = flat
 
         if learnable:
             self.pe = nn.Parameter(torch.randn(dim, max_h, max_w) * 0.02)
         else:
-            pe = self._build_pe()
-            self.register_buffer("pe", pe, persistent=False)
+            self.register_buffer("pe", self._build_pe(), persistent=False)
 
     def _build_pe(self):
         dim_quarter = self.dim // 4
@@ -55,8 +55,14 @@ class PositionalEncoding2D(nn.Module):
         pe[3*dim_quarter:] = cos_x.permute(2, 0, 1)
         return pe
 
-    def forward(self, B, H, W):
+    def forward(self, B, H, W, device=None, dtype=None):
+        assert H <= self.max_h and W <= self.max_w
         pe = self.pe[:, :H, :W]
-        pe = pe.reshape(self.dim, H * W)
-        pe = pe.unsqueeze(0).repeat(B, 1, 1)
-        return pe
+        if not isinstance(self.pe, nn.Parameter):
+            if device is not None or dtype is not None:
+                pe = pe.to(device=device, dtype=dtype)
+
+        if self.flat:
+            pe = pe.view(self.dim, H * W).unsqueeze(0).expand(B, -1, -1)
+            return pe
+        return pe.unsqueeze(0).expand(B, -1, -1, -1)
