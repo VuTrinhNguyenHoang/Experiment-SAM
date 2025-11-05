@@ -413,7 +413,7 @@ class MobileNetSAM(nn.Module):
     def forward(self, x):
         f = self.model.forward_features(x)
         f = self.sam(f)
-        f = self.model.head.global_pool(f)
+        f = self.model.global_pool(f)
         f = torch.flatten(f, 1)
         f = self.dropout(f)
         return self.head(f)
