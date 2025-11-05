@@ -2,75 +2,66 @@ import torch
 import torch.nn as nn
 
 class sLSTMblock(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
+    def __init__(self, input_dim, hidden_dim, dropout=0.1):
         super().__init__()
         self.W = nn.Linear(input_dim, 4 * hidden_dim)
         self.U = nn.Linear(hidden_dim, 4 * hidden_dim)
         self.alpha = nn.Parameter(torch.ones(hidden_dim))
+        self.do = nn.Dropout(dropout)
 
     def forward(self, x, hc=None):
-        B, T, _ = x.size()
-        if hc is None:
-            h = torch.zeros(B, self.U.out_features // 4, device=x.device)
-            c = torch.zeros(B, self.U.out_features // 4, device=x.device)
-        else:
-            h, c = hc
-
+        B, T, D = x.size()
+        H = self.U.out_features // 4
+        h, c = (x.new_zeros(B, H), x.new_zeros(B, H)) if hc is None else hc
         outs = []
         for t in range(T):
-            gates = self.W(x[:, t]) + self.U(h)
-            i, f, o, g = gates.chunk(4, dim=-1)
-            i, f, o, g = torch.sigmoid(i), torch.sigmoid(f), torch.sigmoid(o), torch.tanh(g)
-            c = f * c + i * g
-            c = self.alpha * c
+            i, f, o, g = (self.W(x[:, t]) + self.U(h)).chunk(4, -1)
+            i, f, o = torch.sigmoid(i), torch.sigmoid(f), torch.sigmoid(o)
+            g = torch.tanh(g)
+            c = self.alpha * (f * c + i * g)
             h = o * torch.tanh(c)
-            outs.append(h.unsqueeze(1))
-        return torch.cat(outs, dim=1), (h, c)
+            outs.append(self.do(h).unsqueeze(1))
+        return torch.cat(outs, 1), (h, c)
     
 class mLSTMblock(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
+    def __init__(self, input_dim, hidden_dim, rank=64, dropout=0.1):
         super().__init__()
         self.W = nn.Linear(input_dim, 4 * hidden_dim)
         self.U = nn.Linear(hidden_dim, 4 * hidden_dim)
-        self.V = nn.Linear(input_dim * hidden_dim, hidden_dim)
+        self.A = nn.Linear(input_dim, rank, bias=False)
+        self.B = nn.Linear(hidden_dim, rank, bias=False)
+        self.P = nn.Linear(rank, hidden_dim, bias=False)
+        self.do = nn.Dropout(dropout)
 
     def forward(self, x, hc=None):
-        B, T, _ = x.size()
-        if hc is None:
-            h = torch.zeros(B, self.U.out_features // 4, device=x.device)
-            c = torch.zeros(B, self.U.out_features // 4, device=x.device)
-        else:
-            h, c = hc
-
+        B, T, _ = x.size(); H = self.U.out_features // 4
+        h = x.new_zeros(B, H) if hc is None else hc[0]
+        c = x.new_zeros(B, H) if hc is None else hc[1]
         outs = []
         for t in range(T):
-            gates = self.W(x[:, t]) + self.U(h)
-            i, f, o, g = gates.chunk(4, dim=-1)
-            i, f, o, g = torch.sigmoid(i), torch.sigmoid(f), torch.sigmoid(o), torch.tanh(g)
-
-            mult = (x[:, t].unsqueeze(2) * h.unsqueeze(1))        # (B, input_dim, hidden_dim)
-            m = torch.tanh(self.V(mult.reshape(B, -1)))
-
-            c = f * c + i * g + 0.1 * m
+            i, f, o, g = (self.W(x[:, t]) + self.U(h)).chunk(4, -1)
+            i, f, o = torch.sigmoid(i), torch.sigmoid(f), torch.sigmoid(o)
+            g = torch.tanh(g)
+            mix = self.P(self.A(x[:, t]) * self.B(h))   # O(rank*(in+H))
+            c = f * c + i * g + 0.1 * mix
             h = o * torch.tanh(c)
-            outs.append(h.unsqueeze(1))
-        return torch.cat(outs, dim=1), (h, c)
+            outs.append(self.do(h).unsqueeze(1))
+        return torch.cat(outs, 1), (h, c)
     
 class xLSTM(nn.Module):
-    def __init__(self, input_dim, hidden_dim, layers=['s','m']):
+    def __init__(self, input_dim, hidden_dim, layers=['s','m'], 
+                 rank=64, dropout=0.1, proj_out=None):
         super().__init__()
-        self.blocks = nn.ModuleList()
+        blocks = []
+        d = input_dim
         for l in layers:
-            if l == 's':
-                self.blocks.append(sLSTMblock(input_dim, hidden_dim))
-            elif l == 'm':
-                self.blocks.append(mLSTMblock(input_dim, hidden_dim))
-            else:
-                raise ValueError("layer must be 's' or 'm'")
-            input_dim = hidden_dim  # block sau nhận hidden_dim làm input
+            blk = sLSTMblock(d, hidden_dim, dropout) if l == 's' else mLSTMblock(d, hidden_dim, rank, dropout)
+            blocks.append(blk); d = hidden_dim
+        self.blocks = nn.ModuleList(blocks)
+        self.proj = nn.Linear(d, proj_out) if proj_out is not None else None
 
     def forward(self, x):
         out = x
-        for block in self.blocks:
-            out, _ = block(out)
-        return out
+        for blk in self.blocks:
+            out, _ = blk(out)
+        return self.proj(out) if self.proj is not None else out
