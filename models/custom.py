@@ -520,24 +520,11 @@ class Baseline(nn.Module):
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(self.num_features, num_classes)
 
-        self._has_global_pool = hasattr(self.backbone, "global_pool") or \
-                                (hasattr(self.backbone, "head") and hasattr(self.backbone.head, "global_pool"))
-        self.adapool = nn.AdaptiveAvgPool2d(1)
-
-    def _global_pool(self, f: torch.Tensor) -> torch.Tensor:
-        if f.dim() == 2:
-            return f
-        if self._has_global_pool:
-            if hasattr(self.backbone, "global_pool"):
-                return self.backbone.global_pool(f)
-            if hasattr(self.backbone, "head") and hasattr(self.backbone.head, "global_pool"):
-                return self.backbone.head.global_pool(f)
-
-        return self.adapool(f)
+        self.adapool = self.backbone.head.global_pool
 
     def forward(self, x):
         f = self.backbone.forward_features(x)
-        f = self._global_pool(f)
+        f = self.adapool(f)
         if f.dim() == 4:
             f = f.reshape(f.size(0), -1)
         logits = self.head(self.dropout(f))
