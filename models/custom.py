@@ -520,7 +520,7 @@ class Baseline(nn.Module):
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.head = nn.Linear(self.num_features, num_classes)
 
-        self.adapool = self.backbone.head.global_pool
+        self.adapool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x):
         f = self.backbone.forward_features(x)
